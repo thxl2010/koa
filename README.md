@@ -6,6 +6,8 @@
 
 > [koa-docs-Zh-CN](https://github.com/demopark/koa-docs-Zh-CN)
 
+> [Koa 框架教程\_阮一峰](http://www.ruanyifeng.com/blog/2017/08/koa.html)
+
 > [Egg.js](https://github.com/eggjs/egg)
 
 ## Installation

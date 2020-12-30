@@ -3,16 +3,42 @@
  * @Author: Duyb
  * @Date: 2020-12-29 14:18:09
  * @Last Modified by: Duyb
- * @Last Modified time: 2020-12-29 18:11:00
+ * @Last Modified time: 2020-12-30 14:30:45
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const Koa = require('koa');
 const compose = require('koa-compose');
+const route = require('koa-route');
+const koaBody = require('koa-body');
 const serve = require('koa-static');
 
 const app = new Koa();
+
+// ! 处理错误的中间件: 可以让最外层的中间件，负责所有中间件的错误处理
+const handler = async (ctx, next) => {
+  try {
+    await next();
+  } catch (err) {
+    ctx.response.status = err.statusCode || err.status || 500;
+    ctx.response.body = {
+      message: err.message
+    };
+
+    // ! 释放 error 事件 : 需要注意的是，如果错误被 try...catch 捕获，就不会触发error事件。
+    // 这时，必须调用 ctx.app.emit()，手动释放error事件，才能让监听函数生效
+    ctx.app.emit('error', err, ctx);
+  }
+};
+app.use(handler);
+
+// ! error 事件
+app.on('error', function (err) {
+  console.log('logging error ', err.message);
+  console.log(err);
+});
 
 // ! static
 const publicFiles = serve(path.join(__dirname, 'public'));
@@ -44,6 +70,7 @@ function logger(format) {
 app.use(logger());
 app.use(logger(':method :url'));
 
+// ! 中间件的合成: koa-compose
 async function random(ctx, next) {
   if (ctx.path === '/random') {
     ctx.body = Math.floor(Math.random() * 10);
@@ -72,16 +99,83 @@ const all = compose([random, backwards, pi]);
 
 app.use(all);
 
-// ! read dir
-app.use(async function (ctx, next) {
-  const paths = await fs.readdir('docs');
-  const files = await Promise.all(
-    paths.map(path => fs.readFile(`docs/${path}`, 'utf8'))
-  );
+// ! post
+// upload: { multipart: true }
+app.use(koaBody({ multipart: true }));
 
-  ctx.type = 'markdown';
-  ctx.body = files.join('');
-});
+// ! koa-route
+const about = ctx => {
+  ctx.response.type = 'html';
+  ctx.response.body = '<a href="/">Index Page</a>';
+};
+app.use(route.get('/about', about));
+app.use(route.get('/about2', about));
+
+// redirect
+const redirect = ctx => {
+  ctx.response.redirect('/');
+  ctx.response.body = '<a href="/">Index Page</a>';
+};
+
+app.use(route.get('/redirect', redirect));
+
+// ! 异步中间件: read dir
+// app.use(async function (ctx, next) {
+//   const paths = await fs.readdir('docs');
+//   const files = await Promise.all(
+//     paths.map(path => fs.readFile(`docs/${path}`, 'utf8'))
+//   );
+
+//   ctx.type = 'markdown';
+//   ctx.body = files.join('');
+// });
+
+// ! error
+
+const error500 = ctx => {
+  ctx.throw(500);
+};
+
+const error404 = ctx => {
+  ctx.response.status = 404;
+  ctx.response.body = 'Page Not Found';
+};
+
+app.use(route.get('/500', error500));
+app.use(route.get('/404', error404));
+
+// ! post body
+const postBody = async function (ctx) {
+  const body = ctx.request.body;
+  if (!body.name) ctx.throw(400, 'name required');
+  ctx.body = { name: body.name };
+};
+
+// ! koaBody
+// test: curl --data "name=Jack" -X POST 127.0.0.1:3000/post
+app.use(route.post('/post', postBody));
+
+// ! koaBody upload : app.use(koaBody({ multipart: true }));
+const upload = async function (ctx) {
+  const tmpdir = os.tmpdir();
+  const filePaths = [];
+  const files = ctx.request.body.files || {};
+
+  for (let key in files) {
+    if (Object.prototype.hasOwnProperty.call(files, key)) {
+      const file = files[key];
+      const filePath = path.join(tmpdir, file.name);
+      const reader = fs.createReadStream(file.path);
+      const writer = fs.createWriteStream(filePath);
+      reader.pipe(writer);
+      filePaths.push(filePath);
+    }
+  }
+
+  ctx.body = filePaths;
+};
+// test : curl --form upload=@/path/to/file http://127.0.0.1:3000/upload
+app.use(route.post('/upload', upload));
 
 app.use(async ctx => {
   // console.log('>>> ctx :', ctx);
